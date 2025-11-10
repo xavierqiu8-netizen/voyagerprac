@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Simulació Voyager 1</title>
+<style>
+  :root {
+    --bg1:#000010; --bg2:#020218;
+    --panel:rgba(0,0,0,.5);
+    --accent:#1e90ff; --accent2:#1c75d8;
+    --voyager:#ff4d4d;
+  }
+  html,body{height:100%}
+  body{
+    margin:0; overflow:hidden; color:#fff;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+    background:radial-gradient(circle at center,var(--bg1),var(--bg2));
+  }
+  #info{
+    position:absolute; top:12px; left:12px;
+    background:var(--panel); padding:10px 12px; border-radius:8px;
+    font-size:14px; line-height:1.3; backdrop-filter:blur(4px);
+  }
+  #controls{
+    position:absolute; bottom:20px; left:50%; transform:translateX(-50%);
+    display:flex; align-items:center; gap:10px;
+    background:var(--panel); padding:12px 16px; border-radius:12px; backdrop-filter:blur(4px);
+  }
+  button{
+    background:var(--accent); border:none; color:#fff; cursor:pointer;
+    padding:10px 16px; border-radius:8px; font-weight:600;
+  }
+  button:hover{ background:var(--accent2); }
+  #speedSlider{ width:140px }
+  #spaceCanvas{ display:block }
+  .hint{opacity:.8; font-size:12px; margin-top:6px}
+</style>
+</head>
+<body>
+  <div id="info">
+    <div>Data: <strong id="date">1977-09-05</strong></div>
+    <div>Distància (UA): <strong id="distance">0</strong></div>
+    <div class="hint">Play · Pausa · Reinicia · Velocitat</div>
+  </div>
+
+  <div id="controls">
+    <button id="playBtn">Play</button>
+    <button id="pauseBtn">Pausa</button>
+    <button id="resetBtn">Reinicia</button>
+    <label for="speedSlider">Velocitat</label>
+    <input type="range" id="speedSlider" min="0.2" max="2" step="0.1" value="1">
+  </div>
+
+  <canvas id="spaceCanvas"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById('spaceCanvas');
+  const ctx = canvas.getContext('2d');
+
+  const state = {
+    width: window.innerWidth,
+    height: window.innerHeight,
+    centerX: window.innerWidth/2,
+    centerY: window.innerHeight/2,
+    isPaused: false,
+    angle: 0,
+    speedFactor: 1,
+    trail: [],
+    stars: []
+  };
+
+  // Planetes fixos (per context visual)
+  const planets = [
+    { name:'Mercuri', radius:4,  dist:70,  color:'#b2b2b2', angle:0.2 },
+    { name:'Venus',   radius:6,  dist:110, color:'#d4a373', angle:0.5 },
+    { name:'Terra',   radius:6.5,dist:160, color:'#2e86de', angle:1.0 },
+    { name:'Mart',    radius:5,  dist:210, color:'#c1440e', angle:1.5 },
+  ];
+
+  // Fites temporals per mostrar a la UI
+  const timeline = [
+    { t:   0,  label:'1977-09-05' },
+    { t: 160,  label:'1979-03-05 (Júpiter)' },
+    { t: 260,  label:'1980-11-12 (Saturn)' },
+    { t: 900,  label:'2012-08-25 (Heliopausa)' },
+    { t:1150,  label:'Actualitat' }
+  ];
+
+  // Distància aproximada en UA (interpolació lineal per a la UI)
+  const distancesUA = [
+    { t:0, d:0.0 }, { t:160, d:5.2 }, { t:260, d:9.5 }, { t:900, d:122.0 }, { t:1150, d:160.0 }
+  ];
+
+  function resize(){
+    state.width = window.innerWidth; state.height = window.innerHeight;
+    canvas.width = state.width; canvas.height = state.height;
+    state.centerX = state.width/2; state.centerY = state.height/2;
+    generateStars();
+  }
+
+  function generateStars(){
+    const n = Math.floor((state.width*state.height)/12000);
+    state.stars = Array.from({length:n}, () => ({
+      x: Math.random()*state.width,
+      y: Math.random()*state.height,
+      r: Math.random()*1.6 + .3,
+      a: Math.random()*0.5 + 0.5
+    }));
+  }
+
+  function drawBackground(){
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0,0,state.width,state.height);
+    for(const s of state.stars){
+      ctx.globalAlpha = s.a;
+      ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fillStyle = '#fff'; ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function planetXY(p){
+    return { x: state.centerX + Math.cos(p.angle)*p.dist,
+             y: state.centerY + Math.sin(p.angle)*p.dist };
+  }
+
+  function drawOrbits(){
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+    for(const p of planets){ ctx.beginPath(); ctx.arc(state.centerX,state.centerY,p.dist,0,Math.PI*2); ctx.stroke(); }
+  }
+
+  function drawPlanets(){
+    for(const p of planets){
+      const {x,y} = planetXY(p);
+      ctx.beginPath(); ctx.arc(x,y,p.radius,0,Math.PI*2); ctx.fillStyle = p.color; ctx.fill();
+    }
+  }
+
+  function drawSun(){
+    const g = ctx.createRadialGradient(state.centerX,state.centerY,4,state.centerX,state.centerY,28);
+    g.addColorStop(0,'#fff6b3'); g.addColorStop(1,'#f3c233');
+    ctx.beginPath(); ctx.arc(state.centerX,state.centerY,24,0,Math.PI*2); ctx.fillStyle = g; ctx.fill();
+  }
+
+  function drawAssistLabels(){
+    ctx.fillStyle = '#fff'; ctx.font = '14px system-ui, Arial';
+    const j = { x: state.centerX + 450, y: state.centerY - 150 };
+    const s = { x: state.centerX + 600, y: state.centerY - 50 };
+    ctx.fillText('Júpiter (1979)', j.x, j.y);
+    ctx.fillText('Saturn (1980)',  s.x, s.y);
+    ctx.beginPath();
+    ctx.arc(j.x-10, j.y+10, 4, 0, Math.PI*2);
+    ctx.arc(s.x-10, s.y+10, 4, 0, Math.PI*2);
+    ctx.fillStyle = '#ff6666'; ctx.fill();
+  }
+
+  function lerp(a,b,t){ return a + (b-a)*t; }
+
+  function labelForTime(t){
+    let label = timeline[0].label;
+    for(const m of timeline){ if(t >= m.t) label = m.label; }
+    return label;
+  }
+
+  function distanceForTime(t){
+    for(let i=0;i<distancesUA.length-1;i++){
+      const a = distancesUA[i], b = distancesUA[i+1];
+      if(t>=a.t && t<=b.t){ return lerp(a.d,b.d,(t-a.t)/(b.t-a.t)).toFixed(2); }
+    }
+    return distancesUA[distancesUA.length-1].d.toFixed(2);
+  }
+
+  function updateVoyager(){
+    // Posició de sortida: Terra
+    const earth = planets.find(p=>p.name==='Terra');
+    const start = planetXY(earth);
+
+    // Trajectòria corbada suau (parametritzada per 'angle')
+    const t = state.angle;
+    const x = start.x + t * 1.2;
+    const y = start.y - 0.002 * (t*t) + Math.sin(t/40) * 60;
+
+    // Rastres
+    state.trail.push({x,y}); if(state.trail.length>1200) state.trail.shift();
+    ctx.beginPath();
+    for(let i=0;i<state.trail.length;i++){ const p=state.trail[i]; if(i===0) ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); }
+    ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 2; ctx.stroke();
+
+    // Nau
+    ctx.beginPath(); ctx.arc(x,y,5,0,Math.PI*2);
+    ctx.fillStyle = '#ff4d4d'; ctx.shadowColor = '#ff4d4d'; ctx.shadowBlur = 10; ctx.fill(); ctx.shadowBlur = 0;
+
+    // Petit traç de llançament
+    ctx.beginPath(); ctx.moveTo(start.x,start.y); ctx.lineTo(start.x+15,start.y-10);
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.stroke();
+
+    // UI
+    document.getElementById('date').textContent = labelForTime(t);
+    document.getElementById('distance').textContent = distanceForTime(t);
+  }
+
+  function frame(){
+    if(!state.isPaused){
+      drawBackground();
+      drawSun();
+      drawOrbits();
+      drawPlanets();
+      drawAssistLabels();
+      updateVoyager();
+      state.angle += state.speedFactor;
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // Controls
+  document.getElementById('playBtn').addEventListener('click', () => state.isPaused = false);
+  document.getElementById('pauseBtn').addEventListener('click', () => state.isPaused = true);
+  document.getElementById('resetBtn').addEventListener('click', () => { state.angle = 0; state.trail = []; });
+  document.getElementById('speedSlider').addEventListener('input', e => state.speedFactor = parseFloat(e.target.value));
+  window.addEventListener('resize', resize);
+
+  // Init
+  resize(); frame();
+})();
+</script>
+</body>
+</html>
